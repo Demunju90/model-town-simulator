@@ -1,22 +1,497 @@
-import type { Metadata } from "next"
-import { Inter } from "next/font/google"
-import "./globals.css"
+"use client"
 
-const inter = Inter({ subsets: ["latin"] })
+import { useState, useRef } from "react"
+import Link from "next/link"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ArrowLeft, CheckCircle, XCircle, RotateCcw, Trophy, Target, AlertTriangle } from "lucide-react"
 
-export const metadata: Metadata = {
-  title: "Model Town Simulator",
-  description: "Interactive driving simulator based on NTSA guidelines",
+interface Lane {
+  id: string
+  name: string
+  description: string
+  x: number // percentage from left
+  y: number // percentage from top
+  width: number
+  height: number
+  correctActions: string[]
+  incorrectActions: string[]
+  scenario: string
+  ntsaRule: string
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+interface UserAction {
+  laneId: string
+  action: string
+  isCorrect: boolean
+  timestamp: number
+}
+
+export default function ModelTownSimulator() {
+  const [selectedLane, setSelectedLane] = useState<Lane | null>(null)
+  const [showDialog, setShowDialog] = useState(false)
+  const [selectedAction, setSelectedAction] = useState<string>("")
+  const [showResult, setShowResult] = useState(false)
+  const [isCorrect, setIsCorrect] = useState(false)
+  const [userActions, setUserActions] = useState<UserAction[]>([])
+  const [currentScore, setCurrentScore] = useState(0)
+  const imageRef = useRef<HTMLDivElement>(null)
+
+  // Model Town Board lane configuration based on NTSA guidelines
+  const lanes: Lane[] = [
+    {
+      id: "roundabout-entry-north",
+      name: "Roundabout Entry (North)",
+      description: "Approaching roundabout from the north",
+      x: 48,
+      y: 15,
+      width: 8,
+      height: 12,
+      correctActions: [
+        "Give way to traffic on roundabout",
+        "Signal left when exiting",
+        "Check mirrors before entering",
+      ],
+      incorrectActions: ["Enter without giving way", "Speed up to enter quickly", "Don't signal"],
+      scenario:
+        "You are approaching the roundabout from the north. There are vehicles already circulating. What should you do?",
+      ntsaRule: "NTSA Rule 45: Give way to all traffic already on the roundabout before entering.",
+    },
+    {
+      id: "roundabout-entry-south",
+      name: "Roundabout Entry (South)",
+      description: "Approaching roundabout from the south",
+      x: 48,
+      y: 75,
+      width: 8,
+      height: 12,
+      correctActions: ["Give way to traffic on roundabout", "Signal left when exiting", "Reduce speed before entry"],
+      incorrectActions: ["Enter without checking", "Follow too closely", "Don't use indicators"],
+      scenario: "You are approaching the roundabout from the south during peak hours. What is the correct procedure?",
+      ntsaRule: "NTSA Rule 45: Always give way to traffic from the right when entering a roundabout.",
+    },
+    {
+      id: "roundabout-entry-east",
+      name: "Roundabout Entry (East)",
+      description: "Approaching roundabout from the east",
+      x: 75,
+      y: 48,
+      width: 12,
+      height: 8,
+      correctActions: ["Give way to traffic on roundabout", "Position in correct lane", "Signal appropriately"],
+      incorrectActions: ["Cut across lanes", "Enter at high speed", "Block other traffic"],
+      scenario: "You need to turn right (south) after entering from the east. How should you proceed?",
+      ntsaRule: "NTSA Rule 46: Use the right lane when turning right at a roundabout.",
+    },
+    {
+      id: "roundabout-entry-west",
+      name: "Roundabout Entry (West)",
+      description: "Approaching roundabout from the west",
+      x: 15,
+      y: 48,
+      width: 12,
+      height: 8,
+      correctActions: ["Give way to traffic on roundabout", "Check blind spots", "Maintain safe distance"],
+      incorrectActions: ["Force entry", "Don't check mirrors", "Wrong lane positioning"],
+      scenario: "You want to go straight (east) through the roundabout. What lane should you use?",
+      ntsaRule: "NTSA Rule 47: Use the left lane when going straight through a roundabout.",
+    },
+    {
+      id: "parking-bay-1",
+      name: "Parking Bay 1",
+      description: "Parallel parking space",
+      x: 65,
+      y: 25,
+      width: 15,
+      height: 6,
+      correctActions: ["Check mirrors and blind spots", "Signal before maneuvering", "Park within marked lines"],
+      incorrectActions: ["Park without signaling", "Block other vehicles", "Exceed parking lines"],
+      scenario: "You need to parallel park in this bay. What is the correct sequence?",
+      ntsaRule: "NTSA Rule 78: Always signal your intention and check for pedestrians before parking.",
+    },
+    {
+      id: "parking-bay-2",
+      name: "Parking Bay 2",
+      description: "Perpendicular parking space",
+      x: 65,
+      y: 65,
+      width: 15,
+      height: 8,
+      correctActions: ["Approach at correct angle", "Use reference points", "Straighten vehicle properly"],
+      incorrectActions: ["Park at wrong angle", "Don't use mirrors", "Take up multiple spaces"],
+      scenario: "You are performing perpendicular parking. What should you do first?",
+      ntsaRule: "NTSA Rule 79: Ensure your vehicle is properly positioned within the designated parking space.",
+    },
+    {
+      id: "lane-change-north",
+      name: "Lane Change Area (North)",
+      description: "Lane changing zone",
+      x: 35,
+      y: 20,
+      width: 8,
+      height: 15,
+      correctActions: ["Check mirrors", "Signal early", "Check blind spot", "Change gradually"],
+      incorrectActions: ["Change without signaling", "Don't check blind spot", "Cut off other vehicles"],
+      scenario: "You need to change lanes to the right. What is the proper procedure?",
+      ntsaRule: "NTSA Rule 32: Always signal, check mirrors and blind spots before changing lanes.",
+    },
+    {
+      id: "pedestrian-crossing",
+      name: "Pedestrian Crossing",
+      description: "Zebra crossing area",
+      x: 48,
+      y: 35,
+      width: 8,
+      height: 4,
+      correctActions: ["Stop for pedestrians", "Reduce speed approaching", "Check both sides"],
+      incorrectActions: ["Don't stop for pedestrians", "Speed through crossing", "Block crossing"],
+      scenario: "A pedestrian is waiting to cross. What should you do?",
+      ntsaRule: "NTSA Rule 67: Always give way to pedestrians at designated crossings.",
+    },
+  ]
+
+  const actionOptions = [
+    "Give way to traffic on roundabout",
+    "Signal left when exiting",
+    "Check mirrors before entering",
+    "Enter without giving way",
+    "Speed up to enter quickly",
+    "Don't signal",
+    "Reduce speed before entry",
+    "Position in correct lane",
+    "Signal appropriately",
+    "Check blind spots",
+    "Maintain safe distance",
+    "Park within marked lines",
+    "Check mirrors and blind spot",
+    "Use reference points",
+    "Change gradually",
+    "Stop for pedestrians",
+    "Reduce speed approaching",
+  ]
+
+  const handleLaneClick = (lane: Lane) => {
+    setSelectedLane(lane)
+    setShowDialog(true)
+    setSelectedAction("")
+    setShowResult(false)
+  }
+
+  const handleActionSelect = (action: string) => {
+    setSelectedAction(action)
+  }
+
+  const handleSubmitAction = () => {
+    if (!selectedLane || !selectedAction) return
+
+    const isActionCorrect = selectedLane.correctActions.includes(selectedAction)
+    setIsCorrect(isActionCorrect)
+    setShowResult(true)
+
+    // Record user action
+    const newAction: UserAction = {
+      laneId: selectedLane.id,
+      action: selectedAction,
+      isCorrect: isActionCorrect,
+      timestamp: Date.now(),
+    }
+
+    setUserActions((prev) => [...prev, newAction])
+
+    // Update score
+    if (isActionCorrect) {
+      setCurrentScore((prev) => prev + 10)
+    }
+  }
+
+  const handleNextScenario = () => {
+    setShowDialog(false)
+    setSelectedLane(null)
+    setSelectedAction("")
+    setShowResult(false)
+  }
+
+  const resetSimulation = () => {
+    setUserActions([])
+    setCurrentScore(0)
+    setShowDialog(false)
+    setSelectedLane(null)
+  }
+
+  const correctActions = userActions.filter((action) => action.isCorrect).length
+  const totalActions = userActions.length
+  const accuracy = totalActions > 0 ? Math.round((correctActions / totalActions) * 100) : 0
+
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
-    </html>
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <Link href="/">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Dashboard
+              </Button>
+            </Link>
+            <div className="flex items-center space-x-4">
+              <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                Score: {currentScore}
+              </Badge>
+              <Badge variant="secondary" className="bg-green-100 text-green-800">
+                Accuracy: {accuracy}%
+              </Badge>
+              <Button variant="outline" size="sm" onClick={resetSimulation}>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Reset
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Instructions */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Target className="h-5 w-5 text-blue-500" />
+              <span>Interactive Model Town Board</span>
+            </CardTitle>
+            <CardDescription>
+              Click on different lanes and areas to practice NTSA driving scenarios. Choose the correct action according
+              to Kenya driving regulations.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+
+        {/* Model Town Board */}
+        <Card className="mb-6">
+          <CardContent className="p-0">
+            <div
+              ref={imageRef}
+              className="relative w-full bg-cover bg-center bg-no-repeat min-h-[600px] rounded-lg overflow-hidden"
+              style={{
+                backgroundImage: "url('/images/model-town-board.png')",
+                backgroundSize: "contain",
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "center",
+              }}
+            >
+              {/* Clickable Lane Overlays */}
+              {lanes.map((lane) => (
+                <button
+                  key={lane.id}
+                  onClick={() => handleLaneClick(lane)}
+                  className="absolute bg-blue-500 bg-opacity-20 hover:bg-opacity-40 border-2 border-blue-500 border-opacity-50 hover:border-opacity-80 transition-all duration-200 rounded-lg group"
+                  style={{
+                    left: `${lane.x}%`,
+                    top: `${lane.y}%`,
+                    width: `${lane.width}%`,
+                    height: `${lane.height}%`,
+                    transform: "translate(-50%, -50%)",
+                  }}
+                  title={lane.name}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium">{lane.name}</div>
+                  </div>
+                </button>
+              ))}
+
+              {/* Legend */}
+              <div className="absolute bottom-4 left-4 bg-white bg-opacity-90 rounded-lg p-3 shadow-lg">
+                <h4 className="font-semibold text-sm mb-2">Instructions</h4>
+                <div className="space-y-1 text-xs">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-3 h-3 bg-blue-500 bg-opacity-30 border border-blue-500 rounded"></div>
+                    <span>Clickable areas</span>
+                  </div>
+                  <p className="text-gray-600">Click on lanes to practice driving scenarios</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Statistics */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-3">
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <Trophy className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{currentScore}</p>
+                  <p className="text-sm text-gray-600">Total Score</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-3">
+                <div className="bg-green-100 p-2 rounded-lg">
+                  <CheckCircle className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{correctActions}</p>
+                  <p className="text-sm text-gray-600">Correct Actions</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-3">
+                <div className="bg-red-100 p-2 rounded-lg">
+                  <XCircle className="h-5 w-5 text-red-600" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{totalActions - correctActions}</p>
+                  <p className="text-sm text-gray-600">Incorrect Actions</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-3">
+                <div className="bg-purple-100 p-2 rounded-lg">
+                  <Target className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">{accuracy}%</p>
+                  <p className="text-sm text-gray-600">Accuracy</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+
+      {/* Scenario Dialog */}
+      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+        <DialogContent className="max-w-2xl">
+          {selectedLane && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center space-x-2">
+                  <AlertTriangle className="h-5 w-5 text-orange-500" />
+                  <span>{selectedLane.name}</span>
+                </DialogTitle>
+                <DialogDescription>{selectedLane.description}</DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                {/* Scenario */}
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <h4 className="font-semibold text-blue-900 mb-2">Scenario:</h4>
+                  <p className="text-blue-800">{selectedLane.scenario}</p>
+                </div>
+
+                {/* Action Selection */}
+                {!showResult && (
+                  <div className="space-y-3">
+                    <h4 className="font-semibold">Choose the correct action:</h4>
+                    <div className="grid grid-cols-1 gap-2">
+                      {[...selectedLane.correctActions, ...selectedLane.incorrectActions]
+                        .sort(() => Math.random() - 0.5) // Randomize order
+                        .map((action, index) => (
+                          <button
+                            key={index}
+                            onClick={() => handleActionSelect(action)}
+                            className={`p-3 text-left rounded-lg border transition-colors ${
+                              selectedAction === action
+                                ? "border-blue-500 bg-blue-50"
+                                : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                            }`}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <div
+                                className={`w-4 h-4 rounded-full border-2 ${
+                                  selectedAction === action ? "border-blue-500 bg-blue-500" : "border-gray-300"
+                                }`}
+                              >
+                                {selectedAction === action && (
+                                  <div className="w-2 h-2 bg-white rounded-full mx-auto mt-0.5"></div>
+                                )}
+                              </div>
+                              <span className="text-sm">{action}</span>
+                            </div>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Result */}
+                {showResult && (
+                  <div className={`p-4 rounded-lg ${isCorrect ? "bg-green-50" : "bg-red-50"}`}>
+                    <div className="flex items-center space-x-2 mb-3">
+                      {isCorrect ? (
+                        <CheckCircle className="h-6 w-6 text-green-600" />
+                      ) : (
+                        <XCircle className="h-6 w-6 text-red-600" />
+                      )}
+                      <h4 className={`font-semibold ${isCorrect ? "text-green-900" : "text-red-900"}`}>
+                        {isCorrect ? "Correct!" : "Incorrect"}
+                      </h4>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className={`${isCorrect ? "text-green-800" : "text-red-800"}`}>
+                        <p className="font-medium">NTSA Regulation:</p>
+                        <p className="text-sm">{selectedLane.ntsaRule}</p>
+                      </div>
+
+                      {!isCorrect && (
+                        <div className="text-gray-700">
+                          <p className="font-medium">Correct actions include:</p>
+                          <ul className="text-sm list-disc list-inside space-y-1">
+                            {selectedLane.correctActions.map((action, index) => (
+                              <li key={index}>{action}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex space-x-3">
+                  {!showResult ? (
+                    <>
+                      <Button onClick={handleSubmitAction} disabled={!selectedAction} className="flex-1">
+                        Submit Action
+                      </Button>
+                      <Button variant="outline" onClick={() => setShowDialog(false)}>
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button onClick={handleNextScenario} className="flex-1">
+                        Continue Practice
+                      </Button>
+                      <Button variant="outline" onClick={() => setShowDialog(false)}>
+                        Close
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
